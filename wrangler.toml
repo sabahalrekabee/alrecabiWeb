@@ -9,9 +9,9 @@ directory = "./dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "library-db"
-database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+database_id = "a262e9ca-be35-4ba9-a83d-d63123b3a094"
 migrations_dir = "migrations"
 
 [[kv_namespaces]]
 binding = "PDF_KV"
-id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+id = "3b669b73dba3436398ba11c20225a0ec"
