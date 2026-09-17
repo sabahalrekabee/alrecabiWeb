@@ -1,0 +1,12 @@
+name = "sheikh-sabah-library"
+compatibility_date = "2024-03-20"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "library-db"
+database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "PDF_KV"
+id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
