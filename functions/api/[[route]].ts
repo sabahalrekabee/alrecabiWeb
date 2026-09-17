@@ -181,3 +181,4 @@ app.post('/api/settings', async (c) => {
 });
 
 export const onRequest = handle(app);
+export default app;
