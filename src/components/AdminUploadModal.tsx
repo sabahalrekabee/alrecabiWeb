@@ -21,6 +21,7 @@ interface AdminUploadModalProps {
   onAddBook: (newBook: Book, onProgress?: (percent: number) => void) => Promise<void> | void;
   onDeleteBook: (bookId: string) => void;
   onResetDefaultBooks: () => void;
+  onDeduplicate?: () => Promise<number>;
   onLogout: () => void;
 }
 
@@ -37,6 +38,7 @@ export const AdminUploadModal: React.FC<AdminUploadModalProps> = ({
   onAddBook,
   onDeleteBook,
   onResetDefaultBooks,
+  onDeduplicate,
   onLogout,
 }) => {
   const [activeTab, setActiveTab] = useState<'upload' | 'manage'>('upload');
@@ -69,9 +71,11 @@ export const AdminUploadModal: React.FC<AdminUploadModalProps> = ({
   const [isCompressingFront, setIsCompressingFront] = useState(false);
   const [isCompressingBack, setIsCompressingBack] = useState(false);
 
-  // Manage tab update state
+  // Manage tab update and delete state
   const [updatingBookId, setUpdatingBookId] = useState<string | null>(null);
   const [updatingProgress, setUpdatingProgress] = useState<number | null>(null);
+  const [deletingBookId, setDeletingBookId] = useState<string | null>(null);
+  const [isDeduplicating, setIsDeduplicating] = useState(false);
 
   if (!isOpen) return null;
 
@@ -166,27 +170,32 @@ export const AdminUploadModal: React.FC<AdminUploadModalProps> = ({
       setIsSubmitting(true);
       setUploadProgress(null);
 
+      const cleanTitle = title.trim();
+      const existingBook = books.find(
+        (b) => (b.title || '').trim().toLowerCase() === cleanTitle.toLowerCase()
+      );
+
       const newBook: Book = {
-        id: `book-${Date.now()}`,
-        title: title.trim(),
+        id: existingBook ? existingBook.id : `book-${Date.now()}`,
+        title: cleanTitle,
         subtitle: subtitle.trim() || '',
         category,
         author: author.trim() || 'سماحة الشيخ صباح الركابي',
         pages: Number(pages) || 200,
         year: year.trim() || '1446 هـ / 2025 م',
         description: description.trim(),
-        backCoverBlurb: backCoverBlurb.trim() || `كتاب ${title.trim()} لسماحة الشيخ صباح الركابي.`,
+        backCoverBlurb: backCoverBlurb.trim() || `كتاب ${cleanTitle} لسماحة الشيخ صباح الركابي.`,
         frontCoverUrl,
         backCoverUrl,
         pdfUrl: pdfUrl || '',
-        pdfFileName: pdfFileName || `${title.trim()}.pdf`,
-        createdAt: new Date().toISOString(),
+        pdfFileName: pdfFileName || `${cleanTitle}.pdf`,
+        createdAt: existingBook?.createdAt || new Date().toISOString(),
         fullContent: {
           chapters: [
             {
               title: 'مقدمة الكتاب والمدخل العام',
               pages: [
-                `بسم الله الرحمن الرحيم\n\nنضع بين يدي القارئ الكريم كتاب «${title.trim()}» لسماحة الشيخ صباح الركابي.\n\n${description.trim()}`,
+                `بسم الله الرحمن الرحيم\n\nنضع بين يدي القارئ الكريم كتاب «${cleanTitle}» لسماحة الشيخ صباح الركابي.\n\n${description.trim()}`,
                 `نبذة من الغلاف الخلفي:\n\n${backCoverBlurb.trim() || 'نسأل الله أن ينفع بهذا الأثر العلمي ويجعله ذخراً لطالبي المعرفة واليقين.'}`
               ]
             }
@@ -262,6 +271,24 @@ export const AdminUploadModal: React.FC<AdminUploadModalProps> = ({
       console.error('Error reading PDF file:', err);
       setUpdatingBookId(null);
       setUpdatingProgress(null);
+    }
+  };
+
+  const handleRunDeduplicate = async () => {
+    if (!onDeduplicate) return;
+    try {
+      setIsDeduplicating(true);
+      const count = await onDeduplicate();
+      if (count > 0) {
+        setSuccessMessage(`تم بنجاح إزالة وتطهير ${count} نسخة مكررة من السحابة!`);
+      } else {
+        setSuccessMessage('تم التحقق: لا توجد كتب مكررة، جميع الكتب منظمة ومفردة ✓');
+      }
+      setTimeout(() => setSuccessMessage(null), 4000);
+    } catch {
+      setErrorMessage('حدث خطأ أثناء فحص التكرارات في السحابة');
+    } finally {
+      setIsDeduplicating(false);
     }
   };
 
@@ -650,13 +677,32 @@ export const AdminUploadModal: React.FC<AdminUploadModalProps> = ({
         {/* Tab 2: Manage Books */}
         {activeTab === 'manage' && (
           <div className="flex-1 overflow-y-auto p-6 text-right space-y-3">
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="text-sm font-bold text-stone-300">
-                الكتب الحالية في المكتبة ({books.length} كتاب)
-              </h4>
-              <span className="text-xs text-stone-400">
-                يمكنك تحديث أو إرفاق ملفات PDF الأصلية لأي كتاب مباشرة لمزامنته سحابياً
-              </span>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                <h4 className="text-sm font-bold text-stone-300">
+                  الكتب الحالية في المكتبة ({books.length} كتاب)
+                </h4>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  جميع الكتب محفوظة في السحابة ومزامنة بدقة عالية عبر جميع أجهزتك
+                </p>
+              </div>
+
+              {onDeduplicate && (
+                <button
+                  type="button"
+                  disabled={isDeduplicating}
+                  onClick={handleRunDeduplicate}
+                  className="px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-amber-950/60 text-stone-300 hover:text-amber-300 border border-stone-700 hover:border-amber-600/50 text-xs flex items-center gap-1.5 transition-colors disabled:opacity-60"
+                  title="فحص وحذف أي نسخ مكررة من الكتب في السحابة"
+                >
+                  {isDeduplicating ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  )}
+                  <span>إزالة النسخ المكررة</span>
+                </button>
+              )}
             </div>
 
             <div className="space-y-2.5">
@@ -728,15 +774,25 @@ export const AdminUploadModal: React.FC<AdminUploadModalProps> = ({
 
                     {/* Delete Book button */}
                     <button
-                      onClick={() => {
-                        if (confirm(`هل أنت متأكد من حذف كتاب «${b.title}»؟`)) {
-                          onDeleteBook(b.id);
+                      disabled={deletingBookId === b.id}
+                      onClick={async () => {
+                        if (confirm(`هل أنت متأكد من حذف كتاب «${b.title}» نهائياً من السحابة؟`)) {
+                          try {
+                            setDeletingBookId(b.id);
+                            await onDeleteBook(b.id);
+                          } finally {
+                            setDeletingBookId(null);
+                          }
                         }
                       }}
-                      className="p-2 rounded-lg bg-stone-900 hover:bg-red-950/80 text-stone-400 hover:text-red-300 border border-stone-800 hover:border-red-800/60 text-xs transition-colors"
-                      title="حذف الكتاب"
+                      className="p-2 rounded-lg bg-stone-900 hover:bg-red-950/80 text-stone-400 hover:text-red-300 border border-stone-800 hover:border-red-800/60 text-xs transition-colors disabled:opacity-50"
+                      title="حذف الكتاب نهائياً"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      {deletingBookId === b.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-red-400" />
+                      ) : (
+                        <Trash2 className="w-4 h-4" />
+                      )}
                     </button>
                   </div>
                 </div>

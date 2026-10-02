@@ -1,21 +1,28 @@
 import { Book } from '../types.ts';
 import { INITIAL_BOOKS } from '../data/initialBooks.ts';
 
-const STORAGE_KEY = 'sheikh_sabah_books_v1';
+// Storage key v2 ensures any corrupted or stale cache from v1 is cleared
+const STORAGE_KEY = 'sheikh_sabah_books_v2';
 const AUTH_KEY = 'sheikh_sabah_admin_auth';
+
+// Clear out legacy cache immediately if present
+try {
+  localStorage.removeItem('sheikh_sabah_books_v1');
+} catch {}
 
 export function getStoredBooks(): Book[] {
   try {
     const data = localStorage.getItem(STORAGE_KEY);
-    if (data) {
+    if (data !== null) {
       const parsed = JSON.parse(data);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+      if (Array.isArray(parsed)) {
+        return parsed; // Can be an empty array [] if all books were intentionally deleted!
       }
     }
   } catch (err) {
     console.error('Error loading books from storage:', err);
   }
+  // Initial fallback on brand new installation only
   return INITIAL_BOOKS;
 }
 

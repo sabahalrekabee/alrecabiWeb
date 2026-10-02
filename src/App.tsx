@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Book } from './types.ts';
 import { getStoredBooks, isUserAuthenticated, setUserAuthenticated } from './utils/storage.ts';
 import { INITIAL_BOOKS } from './data/initialBooks.ts';
 import { 
   subscribeToBooks, 
-  addBookToFirestore, 
-  deleteBookFromFirestore, 
-  resetBooksInFirestore 
+  addBookToServer as addBookToFirestore, 
+  deleteBookFromServer as deleteBookFromFirestore, 
+  resetBooksOnServer as resetBooksInFirestore
 } from './services/bookService.ts';
 import { Header } from './components/Header.tsx';
 import { CornerTrigger } from './components/CornerTrigger.tsx';
@@ -18,19 +18,23 @@ import { AdminUploadModal } from './components/AdminUploadModal.tsx';
 import { BookOpen } from 'lucide-react';
 
 export default function App() {
-  const [books, setBooks] = useState<Book[]>(getStoredBooks);
+  // Start with empty array — always load from server, not localStorage.
+  // This prevents the "different books on different devices" bug caused by
+  // stale localStorage being shown before the server responds.
+  const [books, setBooks] = useState<Book[]>([]);
   const [isCloudConnected, setIsCloudConnected] = useState(true);
   
-  // Modals state
   const [selectedBookForDetails, setSelectedBookForDetails] = useState<Book | null>(null);
   const [selectedBookForPdf, setSelectedBookForPdf] = useState<Book | null>(null);
   const [isPasswordPromptOpen, setIsPasswordPromptOpen] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(isUserAuthenticated);
 
-  // Subscribe to real-time changes in Firestore so all devices stay in sync
+  // Hold a ref to the subscription so mutations can pause/resume it
+  const subscriptionRef = useRef<ReturnType<typeof subscribeToBooks> | null>(null);
+
   useEffect(() => {
-    const unsubscribe = subscribeToBooks(
+    const sub = subscribeToBooks(
       (updatedBooks) => {
         if (updatedBooks && updatedBooks.length > 0) {
           setBooks(updatedBooks);
@@ -38,26 +42,25 @@ export default function App() {
         setIsCloudConnected(true);
       },
       (err) => {
-        console.warn('Firestore real-time sync notification:', err);
+        console.warn('Cloud sync error:', err);
         setIsCloudConnected(false);
+        // On error, fall back to localStorage so the UI isn't blank
+        const local = getStoredBooks();
+        if (local.length > 0) setBooks(local);
       }
     );
-
-    return () => unsubscribe();
+    subscriptionRef.current = sub;
+    return () => sub.unsubscribe();
   }, []);
 
-  // Handle double-click on the top-right corner
   const handleCornerTrigger = () => {
     if (isAdminUnlocked) {
-      // Already unlocked in current session
       setIsAdminModalOpen(true);
     } else {
-      // Require password "Recabi"
       setIsPasswordPromptOpen(true);
     }
   };
 
-  // Password success handler
   const handlePasswordSuccess = () => {
     setUserAuthenticated(true);
     setIsAdminUnlocked(true);
@@ -71,37 +74,49 @@ export default function App() {
     setIsAdminModalOpen(false);
   };
 
-  // Add new book from admin modal and sync to Firestore
   const handleAddBook = async (newBook: Book, onProgress?: (percent: number) => void) => {
+    // 1. Pause poll so it doesn't overwrite the optimistic update
+    subscriptionRef.current?.pausePoll();
+    // 2. Optimistically add to UI immediately
+    setBooks((prev) => [newBook, ...prev.filter((b) => b.id !== newBook.id)]);
     try {
       const savedBook = await addBookToFirestore(newBook, onProgress);
+      // 3. Update with the server-confirmed version
       setBooks((prev) => [savedBook, ...prev.filter((b) => b.id !== savedBook.id)]);
     } catch (err) {
-      console.error('Failed to sync new book to Firestore:', err);
-      // Keep optimistic local copy
-      setBooks((prev) => [newBook, ...prev.filter((b) => b.id !== newBook.id)]);
-      throw err;
+      console.error('Failed to sync new book to server:', err);
+      // Keep the optimistic copy — better than vanishing
+    } finally {
+      // 4. Resume poll — this triggers an immediate re-sync from server after mutation settles
+      subscriptionRef.current?.resumePoll();
     }
   };
 
-  // Delete book from Firestore
   const handleDeleteBook = async (bookId: string) => {
+    // 1. Pause poll so it can't resurrect the deleted book during the DELETE request
+    subscriptionRef.current?.pausePoll();
+    // 2. Remove from UI immediately
     setBooks((prev) => prev.filter((b) => b.id !== bookId));
     try {
       await deleteBookFromFirestore(bookId);
     } catch (err) {
-      console.error('Failed to delete book from Firestore:', err);
+      console.error('Failed to delete book from server:', err);
+    } finally {
+      // 3. Resume — re-fetches from server to confirm deletion
+      subscriptionRef.current?.resumePoll();
     }
   };
 
-  // Reset to initial books in Firestore
   const handleResetDefaultBooks = async () => {
     if (confirm('هل تريد إعادة تعيين المكتبة واستعادة المجموعة الكاملة للشيخ صباح الركابي ومزامنتها عبر السحابة؟')) {
+      subscriptionRef.current?.pausePoll();
       setBooks(INITIAL_BOOKS);
       try {
         await resetBooksInFirestore();
       } catch (err) {
-        console.error('Failed to reset books in Firestore:', err);
+        console.error('Failed to reset books on server:', err);
+      } finally {
+        subscriptionRef.current?.resumePoll();
       }
     }
   };
@@ -109,22 +124,18 @@ export default function App() {
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100 flex flex-col selection:bg-amber-500 selection:text-stone-950">
       
-      {/* Top-Right Secret Corner Double-Click Trigger */}
       <CornerTrigger
         onTrigger={handleCornerTrigger}
         isAdminUnlocked={isAdminUnlocked}
       />
 
-      {/* Website Header with Sheikh's Circular Portrait on Left */}
       <Header
         booksCount={books.length}
         isAdminUnlocked={isAdminUnlocked}
         isCloudConnected={isCloudConnected}
       />
 
-      {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {/* Books Grid with 3D Flip Cards */}
         {books.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
             {books.map((book) => (
@@ -151,19 +162,14 @@ export default function App() {
             </button>
           </div>
         )}
-
       </main>
 
-      {/* Modals */}
-      
-      {/* 1. Top-Right Corner Password Prompt (Recabi) */}
       <PasswordPromptModal
         isOpen={isPasswordPromptOpen}
         onClose={() => setIsPasswordPromptOpen(false)}
         onSuccess={handlePasswordSuccess}
       />
 
-      {/* 2. Admin Upload Page/Modal */}
       <AdminUploadModal
         isOpen={isAdminModalOpen}
         onClose={() => setIsAdminModalOpen(false)}
@@ -174,7 +180,6 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      {/* 3. Dual Covers Details Modal */}
       <BookDetailsModal
         book={selectedBookForDetails}
         isOpen={!!selectedBookForDetails}
@@ -185,14 +190,12 @@ export default function App() {
         }}
       />
 
-      {/* 4. PDF Reader Modal */}
       <PdfReaderModal
         book={selectedBookForPdf}
         isOpen={!!selectedBookForPdf}
         onClose={() => setSelectedBookForPdf(null)}
       />
 
-      {/* Website Footer */}
       <footer className="mt-12 bg-stone-950/90 border-t border-stone-800/80 py-5 text-center">
         <div className="max-w-7xl mx-auto px-4 flex flex-col items-center justify-center">
           <p className="text-3d-gold text-[11px] sm:text-xs md:text-sm font-normal py-0.5 tracking-wider inline-block">
